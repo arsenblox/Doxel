@@ -1,0 +1,268 @@
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'models.dart';
+
+class DeadlineAlert {
+  DeadlineAlert({required this.title, required this.message});
+  final String title;
+  final String message;
+}
+
+class CompleteResult {
+  CompleteResult({required this.expGained, required this.leveledUpTo});
+  final int expGained;
+  final int? leveledUpTo;
+}
+
+class AchievementProgress {
+  AchievementProgress({required this.title, required this.description, required this.current, required this.goal});
+  final String title;
+  final String description;
+  final int current;
+  final int goal;
+
+  int get safeCurrent => current.clamp(0, goal).toInt();
+  double get value => goal <= 0 ? 0.0 : (safeCurrent / goal).clamp(0.0, 1.0).toDouble();
+  int get percent => (value * 100).round();
+  bool get unlocked => safeCurrent >= goal;
+}
+
+enum QuestSortMode { priority, exp }
+
+class AppController extends ChangeNotifier {
+  static const _stateKey = 'questclass_v3_state_clean';
+  static const _settingsKey = 'questclass_v3_settings';
+
+  AppState state = AppState();
+  AppSettings settings = AppSettings();
+  QuestSortMode sortMode = QuestSortMode.priority;
+  bool ready = false;
+  int? levelUpToShow;
+  final List<DeadlineAlert> _pendingAlerts = <DeadlineAlert>[];
+  Timer? _timer;
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rawState = prefs.getString(_stateKey);
+    final rawSettings = prefs.getString(_settingsKey);
+    if (rawState != null) {
+      state = AppState.fromJson(decodeJsonMap(rawState));
+    }
+    if (rawSettings != null) {
+      settings = AppSettings.fromJson(decodeJsonMap(rawSettings));
+    }
+    ready = true;
+    checkDeadlineStatus();
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => checkDeadlineStatus());
+    notifyListeners();
+  }
+
+  Future<void> save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_stateKey, encodeJson(state.toJson()));
+    await prefs.setString(_settingsKey, encodeJson(settings.toJson()));
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  List<Quest> activeQuests() {
+    final items = state.quests.where((q) => !q.isCompleted).toList();
+    items.sort((a, b) {
+      if (a.favorite != b.favorite) return a.favorite ? -1 : 1;
+      if (sortMode == QuestSortMode.priority) {
+        final p = b.priority.rank.compareTo(a.priority.rank);
+        if (p != 0) return p;
+      } else {
+        final e = b.expGainAt(DateTime.now()).compareTo(a.expGainAt(DateTime.now()));
+        if (e != 0) return e;
+      }
+      return a.deadline.compareTo(b.deadline);
+    });
+    return items;
+  }
+
+  List<Quest> completedQuests() {
+    final items = state.quests.where((q) => q.isCompleted).toList();
+    items.sort((a, b) => (b.completedAt ?? b.deadline).compareTo(a.completedAt ?? a.deadline));
+    return items;
+  }
+
+  Future<String?> addQuest(Quest quest) async {
+    final maxDeadline = quest.createdAt.add(Duration(days: quest.priority.maxDeadlineDays));
+    if (quest.deadline.isAfter(maxDeadline)) {
+      return 'Deadline too long for this priority. Max ${quest.priority.maxDeadlineDays} days.';
+    }
+    state.quests.add(quest);
+    await save();
+    notifyListeners();
+    return null;
+  }
+
+  Future<void> toggleFavorite(String questId) async {
+    final q = state.quests.where((e) => e.id == questId).firstOrNull;
+    if (q == null) return;
+    q.favorite = !q.favorite;
+    await save();
+    notifyListeners();
+  }
+
+  Future<CompleteResult?> completeQuest(String questId, {String notes = '', List<String> photoPaths = const <String>[]}) async {
+    final q = state.quests.where((e) => e.id == questId).firstOrNull;
+    if (q == null || q.isCompleted) return null;
+    final now = DateTime.now();
+    final late = now.isAfter(q.deadline);
+    final gained = q.expGainAt(now);
+
+    q.completedAt = now;
+    q.completionNotes = notes;
+    q.photoPaths = photoPaths.take(10).toList();
+    q.completionExp = gained;
+    q.completedLate = late;
+
+    state.exp += gained;
+    state.totalCompleted += 1;
+    if (late) {
+      state.lateCompleted += 1;
+      state.streak = 0;
+      _pendingAlerts.add(DeadlineAlert(title: 'Deadline passed', message: '${q.title}: streak reset.'));
+    } else {
+      state.streak += 1;
+    }
+
+    int? levelUp;
+    while (state.exp >= state.expNeeded) {
+      state.exp -= state.expNeeded;
+      state.level += 1;
+      levelUp = state.level;
+    }
+    levelUpToShow = levelUp;
+
+    await save();
+    notifyListeners();
+    return CompleteResult(expGained: gained, leveledUpTo: levelUp);
+  }
+
+  Future<void> setSortMode(QuestSortMode mode) async {
+    sortMode = mode;
+    notifyListeners();
+  }
+
+  Future<void> updateSettings(AppSettings next) async {
+    settings = next;
+    await save();
+    notifyListeners();
+  }
+
+  Future<void> resetAllData() async {
+    state = AppState();
+    await save();
+    notifyListeners();
+  }
+
+  List<AchievementProgress> achievements(bool Indonesian) {
+    final completed = state.totalCompleted;
+    final level = state.level;
+    return <AchievementProgress>[
+      AchievementProgress(
+        title: Indonesian ? 'Quest Beginner' : 'Quest Beginner',
+        description: Indonesian ? 'Kamu menyelesaikan quest untuk pertama kali!' : 'You completed quest for the first time!',
+        current: completed,
+        goal: 1,
+      ),
+      AchievementProgress(
+        title: Indonesian ? 'Quest Rookie' : 'Quest Rookie',
+        description: Indonesian ? 'Selesaikan 5 quest.' : 'Complete 5 quests.',
+        current: completed,
+        goal: 5,
+      ),
+      AchievementProgress(
+        title: Indonesian ? 'Quest Hunter' : 'Quest Hunter',
+        description: Indonesian ? 'Selesaikan 10 quest.' : 'Complete 10 quests.',
+        current: completed,
+        goal: 10,
+      ),
+      AchievementProgress(
+        title: Indonesian ? 'Level Awakened' : 'Level Awakened',
+        description: Indonesian ? 'Capai level 2.' : 'Reach level 2.',
+        current: level,
+        goal: 2,
+      ),
+      AchievementProgress(
+        title: Indonesian ? 'Level Grinder' : 'Level Grinder',
+        description: Indonesian ? 'Capai level 5.' : 'Reach level 5.',
+        current: level,
+        goal: 5,
+      ),
+      AchievementProgress(
+        title: Indonesian ? 'Pixel Legend' : 'Pixel Legend',
+        description: Indonesian ? 'Capai level 10.' : 'Reach level 10.',
+        current: level,
+        goal: 10,
+      ),
+    ];
+  }
+
+  void checkDeadlineStatus() {
+    final now = DateTime.now();
+    var changed = false;
+
+    for (final q in state.quests.where((q) => !q.isCompleted)) {
+      if (now.isAfter(q.deadline) && !state.penalizedQuestIds.contains(q.id)) {
+        state.penalizedQuestIds.add(q.id);
+        state.deadlineFailed += 1;
+        state.streak = 0;
+        _pendingAlerts.add(DeadlineAlert(title: 'Deadline passed', message: '${q.title}: streak reset.'));
+        changed = true;
+      }
+
+      if (now.isBefore(q.deadline)) {
+        final remainingMinutes = q.deadline.difference(now).inMinutes;
+        for (final offset in settings.reminderMinutes) {
+          final key = '${q.id}:$offset';
+          final shouldAlert = remainingMinutes <= offset && remainingMinutes > offset - 60;
+          if (shouldAlert && !state.alertedReminderKeys.contains(key)) {
+            state.alertedReminderKeys.add(key);
+            _pendingAlerts.add(DeadlineAlert(title: 'Deadline soon', message: '${q.title}: ${_formatRemaining(remainingMinutes)} left.'));
+            changed = true;
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      save();
+      notifyListeners();
+    }
+  }
+
+  String _formatRemaining(int minutes) {
+    if (minutes >= 1440) return '${minutes ~/ 1440} days';
+    if (minutes >= 60) return '${minutes ~/ 60} hours';
+    return '$minutes minutes';
+  }
+
+  List<DeadlineAlert> popPendingAlerts() {
+    final out = List<DeadlineAlert>.from(_pendingAlerts);
+    _pendingAlerts.clear();
+    return out;
+  }
+
+  int? popLevelUp() {
+    final out = levelUpToShow;
+    levelUpToShow = null;
+    return out;
+  }
+}
+
+extension FirstOrNullExtension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}

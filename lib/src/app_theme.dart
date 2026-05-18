@@ -1,0 +1,104 @@
+import 'package:flutter/material.dart';
+
+import 'models.dart';
+
+class AppColors extends ThemeExtension<AppColors> {
+  const AppColors({
+    required this.bgTop,
+    required this.bgBottom,
+    required this.panel,
+    required this.panelSoft,
+    required this.text,
+    required this.muted,
+    required this.line,
+    required this.accent,
+  });
+
+  final Color bgTop;
+  final Color bgBottom;
+  final Color panel;
+  final Color panelSoft;
+  final Color text;
+  final Color muted;
+  final Color line;
+  final Color accent;
+
+  static const dark = AppColors(
+    bgTop: Color(0xFF0D0D17),
+    bgBottom: Color(0xFF252A46),
+    panel: Color(0xFF171927),
+    panelSoft: Color(0xFF202338),
+    text: Color(0xFFF5F5FF),
+    muted: Color(0xFFA7A8B8),
+    line: Color(0xFFE7E7F3),
+    accent: Color(0xFF00A3FF),
+  );
+
+  static const light = AppColors(
+    bgTop: Color(0xFFEDEFFF),
+    bgBottom: Color(0xFFFFFFFF),
+    panel: Color(0xFFF9FAFF),
+    panelSoft: Color(0xFFE8EBFF),
+    text: Color(0xFF161827),
+    muted: Color(0xFF5E6475),
+    line: Color(0xFF282C40),
+    accent: Color(0xFF246BFE),
+  );
+
+  @override
+  AppColors copyWith({Color? bgTop, Color? bgBottom, Color? panel, Color? panelSoft, Color? text, Color? muted, Color? line, Color? accent}) {
+    return AppColors(
+      bgTop: bgTop ?? this.bgTop,
+      bgBottom: bgBottom ?? this.bgBottom,
+      panel: panel ?? this.panel,
+      panelSoft: panelSoft ?? this.panelSoft,
+      text: text ?? this.text,
+      muted: muted ?? this.muted,
+      line: line ?? this.line,
+      accent: accent ?? this.accent,
+    );
+  }
+
+  @override
+  ThemeExtension<AppColors> lerp(covariant ThemeExtension<AppColors>? other, double t) => this;
+}
+
+ThemeData buildTheme(AppSettings settings) {
+  final colors = settings.themeMode == AppThemeMode.dark ? AppColors.dark : AppColors.light;
+  final family = settings.fontStyle == PixelFontStyle.visitor ? 'Visitor' : 'monospace';
+  final base = ThemeData(
+    useMaterial3: true,
+    brightness: settings.themeMode == AppThemeMode.dark ? Brightness.dark : Brightness.light,
+    fontFamily: family,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: colors.accent,
+      brightness: settings.themeMode == AppThemeMode.dark ? Brightness.dark : Brightness.light,
+    ),
+  );
+
+  final rawText = base.textTheme.apply(fontFamily: family, bodyColor: colors.text, displayColor: colors.text);
+  final fixedText = rawText.copyWith(
+    displayLarge: rawText.displayLarge?.copyWith(height: 1.18),
+    displayMedium: rawText.displayMedium?.copyWith(height: 1.18),
+    displaySmall: rawText.displaySmall?.copyWith(height: 1.18),
+    headlineLarge: rawText.headlineLarge?.copyWith(height: 1.16),
+    headlineMedium: rawText.headlineMedium?.copyWith(height: 1.16),
+    headlineSmall: rawText.headlineSmall?.copyWith(height: 1.16),
+    titleLarge: rawText.titleLarge?.copyWith(height: 1.15),
+    titleMedium: rawText.titleMedium?.copyWith(height: 1.15),
+    titleSmall: rawText.titleSmall?.copyWith(height: 1.15),
+    bodyLarge: rawText.bodyLarge?.copyWith(height: 1.18),
+    bodyMedium: rawText.bodyMedium?.copyWith(height: 1.18),
+    bodySmall: rawText.bodySmall?.copyWith(height: 1.18),
+    labelLarge: rawText.labelLarge?.copyWith(height: 1.14),
+    labelMedium: rawText.labelMedium?.copyWith(height: 1.14),
+    labelSmall: rawText.labelSmall?.copyWith(height: 1.14),
+  );
+  return base.copyWith(
+    scaffoldBackgroundColor: colors.bgBottom,
+    textTheme: fixedText,
+    extensions: <ThemeExtension<dynamic>>[colors],
+  );
+}
+
+AppColors appColors(BuildContext context) => Theme.of(context).extension<AppColors>()!;

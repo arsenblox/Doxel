@@ -1,0 +1,222 @@
+import 'package:flutter/material.dart';
+
+import 'app_controller.dart';
+import 'app_theme.dart';
+import 'helpers.dart';
+import 'i18n.dart';
+import 'models.dart';
+import 'pixel_widgets.dart';
+
+bool _createQuestSheetOpen = false;
+
+Future<void> showCreateQuestSheet(BuildContext context, AppController controller) async {
+  if (_createQuestSheetOpen) return;
+  _createQuestSheetOpen = true;
+  try {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CreateQuestSheet(controller: controller),
+    );
+  } finally {
+    _createQuestSheetOpen = false;
+  }
+}
+
+class CreateQuestSheet extends StatefulWidget {
+  const CreateQuestSheet({super.key, required this.controller});
+  final AppController controller;
+
+  @override
+  State<CreateQuestSheet> createState() => _CreateQuestSheetState();
+}
+
+class _CreateQuestSheetState extends State<CreateQuestSheet> {
+  final title = TextEditingController();
+  final desc = TextEditingController();
+  final fullUrl = TextEditingController();
+  final lmsId = TextEditingController();
+  Priority priority = Priority.normal;
+  WorkType workType = WorkType.school;
+  LmsLinkMode linkMode = LmsLinkMode.fullUrl;
+  LmsActivityType activityType = LmsActivityType.assign;
+  DateTime deadline = DateTime.now().add(const Duration(days: 7));
+  bool _isSaving = false;
+
+  @override
+  void dispose() {
+    title.dispose();
+    desc.dispose();
+    fullUrl.dispose();
+    lmsId.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L10n(widget.controller.settings.language);
+    final c = appColors(context);
+    return DraggableScrollableSheet(
+      initialChildSize: 0.86,
+      maxChildSize: 0.96,
+      minChildSize: 0.45,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(color: c.panel, borderRadius: const BorderRadius.vertical(top: Radius.circular(32))),
+          padding: EdgeInsets.only(left: 20, right: 20, top: 18, bottom: MediaQuery.viewInsetsOf(context).bottom + 20),
+          child: ListView(
+            controller: scrollController,
+            children: <Widget>[
+              Center(child: Container(width: 90, height: 5, decoration: BoxDecoration(color: c.line, borderRadius: BorderRadius.circular(99)))),
+              const SizedBox(height: 18),
+              Text(l.createQuest, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 2)),
+              const SizedBox(height: 18),
+              TextField(controller: title, decoration: InputDecoration(labelText: l.title, border: const OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextField(controller: desc, minLines: 2, maxLines: 4, decoration: InputDecoration(labelText: l.description, border: const OutlineInputBorder())),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<Priority>(
+                value: priority,
+                decoration: InputDecoration(labelText: l.priority, border: const OutlineInputBorder()),
+                items: Priority.values.map((p) => DropdownMenuItem(value: p, child: Text('${l.priorityName(p)}  +${p.baseExp} EXP'))).toList(),
+                onChanged: (v) => setState(() => priority = v ?? priority),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<WorkType>(
+                value: workType,
+                decoration: InputDecoration(labelText: l.typeOfWork, border: const OutlineInputBorder()),
+                items: WorkType.values.map((t) => DropdownMenuItem(value: t, child: Text(l.workTypeName(t)))).toList(),
+                onChanged: (v) => setState(() => workType = v ?? workType),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: BorderSide(color: c.line.withValues(alpha: 0.4))),
+                title: Text('${l.deadline}: ${formatDateTime(deadline)}'),
+                subtitle: Text('Max ${priority.maxDeadlineDays} days for ${l.priorityName(priority)}'),
+                trailing: const Icon(Icons.calendar_month),
+                onTap: pickDeadline,
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<LmsLinkMode>(
+                segments: <ButtonSegment<LmsLinkMode>>[
+                  ButtonSegment(value: LmsLinkMode.fullUrl, label: Text(l.fullUrl)),
+                  ButtonSegment(value: LmsLinkMode.moodleId, label: Text(l.lmsId)),
+                ],
+                selected: <LmsLinkMode>{linkMode},
+                onSelectionChanged: (v) => setState(() => linkMode = v.first),
+              ),
+              const SizedBox(height: 12),
+              if (linkMode == LmsLinkMode.fullUrl)
+                TextField(controller: fullUrl, decoration: InputDecoration(labelText: l.fullUrl, border: const OutlineInputBorder()))
+              else ...<Widget>[
+                DropdownButtonFormField<LmsActivityType>(
+                  value: activityType,
+                  decoration: const InputDecoration(labelText: 'Type', border: OutlineInputBorder()),
+                  items: const <DropdownMenuItem<LmsActivityType>>[
+                    DropdownMenuItem(value: LmsActivityType.assign, child: Text('ASSIGN')),
+                    DropdownMenuItem(value: LmsActivityType.quiz, child: Text('QUIZ')),
+                  ],
+                  onChanged: (v) => setState(() => activityType = v ?? activityType),
+                ),
+                const SizedBox(height: 12),
+                TextField(controller: lmsId, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: l.lmsId, border: const OutlineInputBorder())),
+              ],
+              const SizedBox(height: 18),
+              PixelButton(label: l.save, filled: true, onPressed: _isSaving ? null : saveQuest),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
+  Future<void> pickDeadline() async {
+    final now = DateTime.now();
+    final firstDate = DateTime(now.year, now.month, now.day);
+    final lastDate = firstDate.add(Duration(days: priority.maxDeadlineDays));
+    var initialDate = DateTime(deadline.year, deadline.month, deadline.day);
+    if (initialDate.isBefore(firstDate)) initialDate = firstDate;
+    if (initialDate.isAfter(lastDate)) initialDate = lastDate;
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(deadline));
+    if (time == null || !mounted) return;
+    setState(() => deadline = DateTime(date.year, date.month, date.day, time.hour, time.minute));
+  }
+
+
+  Future<void> saveQuest() async {
+    if (_isSaving) return;
+    FocusScope.of(context).unfocus();
+
+    final cleanedTitle = title.text.trim();
+    final cleanedUrl = fullUrl.text.trim();
+    final cleanedId = lmsId.text.trim();
+
+    void showError(String message) {
+      widget.controller.notifyError('ERROR OCCURRED!', message);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
+
+    if (cleanedTitle.isEmpty) {
+      showError('Please fill the quest name first.');
+      return;
+    }
+
+    if (linkMode == LmsLinkMode.fullUrl && cleanedUrl.isNotEmpty) {
+      final uri = Uri.tryParse(cleanedUrl);
+      final valid = uri != null && (uri.isScheme('http') || uri.isScheme('https')) && uri.host.isNotEmpty;
+      if (!valid) {
+        showError('Invalid LMS link. Use a full URL like https://mylms.telkomschools.sch.id/...');
+        return;
+      }
+    }
+
+    if (linkMode == LmsLinkMode.moodleId && cleanedId.isNotEmpty && !RegExp(r'^\d+$').hasMatch(cleanedId)) {
+      showError('LMS ID must contain numbers only. You can also leave it empty.');
+      return;
+    }
+
+    if (deadline.isBefore(DateTime.now().subtract(const Duration(minutes: 1)))) {
+      showError('Deadline cannot be in the past.');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      final quest = Quest(
+        id: newId(),
+        title: cleanedTitle,
+        description: desc.text.trim(),
+        priority: priority,
+        workType: workType,
+        createdAt: DateTime.now(),
+        deadline: deadline,
+        lmsLinkMode: linkMode,
+        lmsFullUrl: cleanedUrl,
+        lmsActivityType: activityType,
+        lmsId: cleanedId,
+      );
+      final err = await widget.controller.addQuest(quest);
+      if (!mounted) return;
+      if (err != null) {
+        showError(err);
+        return;
+      }
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      showError('Could not create quest: $e');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+}

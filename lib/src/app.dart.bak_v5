@@ -1,0 +1,48 @@
+import 'package:flutter/material.dart';
+
+import 'app_controller.dart';
+import 'app_theme.dart';
+import 'main_shell.dart';
+
+class QuestClassApp extends StatefulWidget {
+  const QuestClassApp({super.key});
+
+  @override
+  State<QuestClassApp> createState() => _QuestClassAppState();
+}
+
+class _QuestClassAppState extends State<QuestClassApp> {
+  final controller = AppController();
+
+  @override
+  void initState() {
+    super.initState();
+    controller.addListener(() => setState(() {}));
+    controller.load();
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'QuestClass',
+      builder: (context, child) {
+        final media = MediaQuery.of(context);
+        return MediaQuery(
+          data: media.copyWith(textScaler: const TextScaler.linear(1.0)),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      theme: buildTheme(controller.settings),
+      home: controller.ready
+          ? MainShell(controller: controller)
+          : const Scaffold(body: Center(child: CircularProgressIndicator())),
+    );
+  }
+}

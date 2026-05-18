@@ -1,0 +1,30 @@
+name: modelesson_quest
+description: A soft pixel gameplay todo app prototype built with Flutter.
+publish_to: 'none'
+version: 0.2.0+2
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: 2.5.3
+  gallery_saver_plus: 3.2.9
+  image_picker: 1.1.2
+  url_launcher: 6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # QuestClass generated fonts start
+  fonts:
+    - family: Visitor
+      fonts:
+        - asset: assets/fonts/visitor2.ttf
+  # QuestClass generated fonts end

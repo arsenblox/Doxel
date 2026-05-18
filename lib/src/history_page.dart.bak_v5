@@ -1,0 +1,63 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+
+import 'app_controller.dart';
+import 'app_theme.dart';
+import 'helpers.dart';
+import 'i18n.dart';
+import 'pixel_widgets.dart';
+
+class HistoryPage extends StatelessWidget {
+  const HistoryPage({super.key, required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L10n(controller.settings.language);
+    final c = appColors(context);
+    final items = controller.completedQuests();
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 120),
+        children: <Widget>[
+          SectionTitle(l.history),
+          if (items.isEmpty)
+            Center(child: Padding(padding: const EdgeInsets.all(40), child: Text(l.noQuest)))
+          else
+            for (final q in items)
+              Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: c.panel.withValues(alpha: 0.85), borderRadius: BorderRadius.circular(24), border: Border.all(color: c.line.withValues(alpha: 0.6), width: 2)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(q.title.toUpperCase(), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                    const SizedBox(height: 4),
+                    Text('${l.completed}: ${formatDateTime(q.completedAt ?? q.deadline)}'),
+                    if (q.completionNotes.trim().isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 10),
+                      Text(q.completionNotes),
+                    ],
+                    if (q.photoPaths.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 86,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemBuilder: (_, i) => ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(File(q.photoPaths[i]), width: 86, height: 86, fit: BoxFit.cover)),
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemCount: q.photoPaths.length,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+}

@@ -1,0 +1,147 @@
+
+import 'package:flutter/material.dart';
+
+import 'app_controller.dart';
+import 'app_theme.dart';
+import 'i18n.dart';
+import 'pixel_widgets.dart';
+
+class CalendarCard extends StatefulWidget {
+  const CalendarCard({super.key, required this.controller});
+  final AppController controller;
+
+  @override
+  State<CalendarCard> createState() => _CalendarCardState();
+}
+
+class _CalendarCardState extends State<CalendarCard> {
+  late DateTime month;
+  DateTime? selected;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    month = DateTime(now.year, now.month);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L10n(widget.controller.settings.language);
+    final c = appColors(context);
+    final days = DateUtils.getDaysInMonth(month.year, month.month);
+    final firstWeekday = DateTime(month.year, month.month, 1).weekday; // Mon=1
+    final active = widget.controller.activeQuests();
+    final selectedTasks = selected == null
+        ? <dynamic>[]
+        : active.where((q) => DateUtils.isSameDay(q.deadline, selected)).toList();
+
+    return PixelPanel(
+      title: l.calendar,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tiny = constraints.maxHeight < 300 || constraints.maxWidth < 320;
+          final cells = List<Widget>.generate(42, (i) {
+            final day = i - (firstWeekday - 1) + 1;
+            if (day < 1 || day > days) return const SizedBox.shrink();
+            final date = DateTime(month.year, month.month, day);
+            final count = active.where((q) => DateUtils.isSameDay(q.deadline, date)).length;
+            final isToday = DateUtils.isSameDay(date, DateTime.now());
+            final isSelected = selected != null && DateUtils.isSameDay(date, selected);
+            return InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => setState(() => selected = date),
+              child: Container(
+                padding: EdgeInsets.all(tiny ? 1 : 2),
+                decoration: BoxDecoration(
+                  color: isSelected ? c.line.withValues(alpha: 0.18) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  border: isToday ? Border.all(color: c.accent, width: 2) : null,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('$day', maxLines: 1, style: TextStyle(fontSize: tiny ? 10 : 13, height: 1.0, fontWeight: FontWeight.w900, color: c.text)),
+                      ),
+                    ),
+                    SizedBox(height: tiny ? 1 : 2),
+                    if (count > 0)
+                      Container(width: tiny ? 4 : 6, height: tiny ? 4 : 6, decoration: const BoxDecoration(color: Color(0xFFFFC400), shape: BoxShape.circle))
+                    else
+                      SizedBox(height: tiny ? 4 : 6),
+                  ],
+                ),
+              ),
+            );
+          });
+
+          return Column(
+            children: <Widget>[
+              SizedBox(
+                height: tiny ? 32 : 40,
+                child: Row(
+                  children: <Widget>[
+                    IconButton(padding: EdgeInsets.zero, onPressed: () => setState(() => month = DateTime(month.year, month.month - 1)), icon: const Icon(Icons.chevron_left)),
+                    Expanded(
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('${l.monthName(month.month)} ${month.year}', maxLines: 1, style: const TextStyle(fontSize: 18, height: 1.0, fontWeight: FontWeight.w900, letterSpacing: 1.8)),
+                        ),
+                      ),
+                    ),
+                    IconButton(padding: EdgeInsets.zero, onPressed: () => setState(() => month = DateTime(month.year, month.month + 1)), icon: const Icon(Icons.chevron_right)),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: tiny ? 18 : 22,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: const <Widget>[
+                    _Week('M'), _Week('T'), _Week('W'), _Week('T'), _Week('F'), _Week('S'), _Week('S'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Expanded(
+                child: GridView.count(
+                  padding: EdgeInsets.zero,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisCount: 7,
+                  childAspectRatio: tiny ? 1.0 : 1.08,
+                  mainAxisSpacing: tiny ? 1 : 2,
+                  crossAxisSpacing: tiny ? 1 : 2,
+                  children: cells,
+                ),
+              ),
+              if (!tiny && selectedTasks.isNotEmpty)
+                SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: selectedTasks.map<Widget>((q) => Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Chip(label: Text(q.title, overflow: TextOverflow.ellipsis)),
+                        )).toList(),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Week extends StatelessWidget {
+  const _Week(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Expanded(child: Center(child: Text(text, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 10, height: 1.0))));
+}

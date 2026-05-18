@@ -1,0 +1,203 @@
+
+import 'package:flutter/material.dart';
+
+import 'app_controller.dart';
+import 'app_theme.dart';
+import 'i18n.dart';
+import 'pixel_widgets.dart';
+
+class CalendarCard extends StatefulWidget {
+  const CalendarCard({super.key, required this.controller});
+  final AppController controller;
+
+  @override
+  State<CalendarCard> createState() => _CalendarCardState();
+}
+
+class _CalendarCardState extends State<CalendarCard> {
+  late DateTime month;
+  DateTime? selected;
+
+  @override
+  void initState() {
+    super.initState();
+    // Default design month requested for the mockup.
+    month = DateTime(2026, 5);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L10n(widget.controller.settings.language);
+    final c = appColors(context);
+    final days = DateUtils.getDaysInMonth(month.year, month.month);
+    final firstWeekday = DateTime(month.year, month.month, 1).weekday; // Monday = 1
+    final active = widget.controller.activeQuests();
+    final selectedTasks = selected == null
+        ? <dynamic>[]
+        : active.where((q) => DateUtils.isSameDay(q.deadline, selected)).toList();
+
+    return PixelPanel(
+      title: l.calendar,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compactSpace = constraints.maxWidth < 360 || constraints.maxHeight < 360;
+          final titleFont = compactSpace ? 20.0 : 24.0;
+          final weekFont = compactSpace ? 12.0 : 14.0;
+          final dayFont = compactSpace ? 15.0 : 18.0;
+          final dotSize = compactSpace ? 5.0 : 7.0;
+
+          Widget dayCell(int index) {
+            final day = index - (firstWeekday - 1) + 1;
+            if (day < 1 || day > days) {
+              return const Expanded(child: SizedBox.shrink());
+            }
+            final date = DateTime(month.year, month.month, day);
+            final count = active.where((q) => DateUtils.isSameDay(q.deadline, date)).length;
+            final isToday = DateUtils.isSameDay(date, DateTime.now());
+            final isSelected = selected != null && DateUtils.isSameDay(date, selected);
+
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() => selected = date),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: isSelected ? c.line.withValues(alpha: 0.18) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: isToday ? Border.all(color: c.accent, width: 2) : null,
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: <Widget>[
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            '$day',
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: dayFont,
+                              height: 1.0,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.8,
+                              color: c.text,
+                            ),
+                          ),
+                        ),
+                        if (count > 0)
+                          Positioned(
+                            bottom: 3,
+                            child: Container(
+                              width: dotSize,
+                              height: dotSize,
+                              decoration: const BoxDecoration(color: Color(0xFFFFC400), shape: BoxShape.circle),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+
+          return Column(
+            children: <Widget>[
+              SizedBox(
+                height: compactSpace ? 38 : 46,
+                child: Row(
+                  children: <Widget>[
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: () => setState(() => month = DateTime(month.year, month.month - 1)),
+                      icon: Icon(Icons.chevron_left, color: c.text),
+                    ),
+                    Expanded(
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            '${l.monthName(month.month)} ${month.year}',
+                            maxLines: 1,
+                            style: TextStyle(fontSize: titleFont, height: 1.0, fontWeight: FontWeight.w900, letterSpacing: 2.0, color: c.text),
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: () => setState(() => month = DateTime(month.year, month.month + 1)),
+                      icon: Icon(Icons.chevron_right, color: c.text),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: compactSpace ? 24 : 28,
+                child: Row(
+                  children: <Widget>[
+                    _Week('M', fontSize: weekFont),
+                    _Week('T', fontSize: weekFont),
+                    _Week('W', fontSize: weekFont),
+                    _Week('T', fontSize: weekFont),
+                    _Week('F', fontSize: weekFont),
+                    _Week('S', fontSize: weekFont),
+                    _Week('S', fontSize: weekFont),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Expanded(
+                child: Column(
+                  children: List<Widget>.generate(6, (row) {
+                    return Expanded(
+                      child: Row(
+                        children: List<Widget>.generate(7, (col) => dayCell(row * 7 + col)),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+              if (selectedTasks.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 38,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: selectedTasks
+                        .map<Widget>((q) => Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Chip(label: Text(q.title, overflow: TextOverflow.ellipsis)),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Week extends StatelessWidget {
+  const _Week(this.text, {required this.fontSize});
+  final String text;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = appColors(context);
+    return Expanded(
+      child: Center(
+        child: Text(
+          text,
+          style: TextStyle(fontWeight: FontWeight.w900, fontSize: fontSize, height: 1.0, color: c.muted),
+        ),
+      ),
+    );
+  }
+}

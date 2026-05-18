@@ -1,0 +1,384 @@
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'models.dart';
+
+class DeadlineAlert {
+  DeadlineAlert({required this.title, required this.message});
+  final String title;
+  final String message;
+}
+
+class CompleteResult {
+  CompleteResult({required this.expGained, required this.leveledUpTo});
+  final int expGained;
+  final int? leveledUpTo;
+}
+
+enum QuestSortMode { priority, exp }
+enum AppNotificationKind { achievement, error, action, deadline, level }
+
+class AppNotification {
+  AppNotification({
+    required this.kind,
+    required this.title,
+    required this.message,
+    DateTime? occurredAt,
+  }) : occurredAt = occurredAt ?? DateTime.now();
+
+  final AppNotificationKind kind;
+  final String title;
+  final String message;
+  final DateTime occurredAt;
+}
+
+class AchievementProgress {
+  AchievementProgress({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.current,
+    required this.goal,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+  final int current;
+  final int goal;
+
+  int get safeCurrent => current.clamp(0, goal).toInt();
+  double get value => goal <= 0 ? 0.0 : (safeCurrent / goal).clamp(0.0, 1.0).toDouble();
+  int get percent => (value * 100).round();
+  bool get unlocked => safeCurrent >= goal;
+}
+
+class AppController extends ChangeNotifier {
+  static const _stateKey = 'questclass_v3_state_clean';
+  static const _settingsKey = 'questclass_v3_settings';
+
+  AppState state = AppState();
+  AppSettings settings = AppSettings();
+  QuestSortMode sortMode = QuestSortMode.priority;
+  bool ready = false;
+  int? levelUpToShow;
+  final List<AppNotification> _pendingNotifications = <AppNotification>[];
+  final List<DeadlineAlert> _pendingAlerts = <DeadlineAlert>[];
+  Timer? _timer;
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final rawState = prefs.getString(_stateKey);
+    final rawSettings = prefs.getString(_settingsKey);
+    if (rawState != null) {
+      state = AppState.fromJson(decodeJsonMap(rawState));
+    }
+    if (rawSettings != null) {
+      settings = AppSettings.fromJson(decodeJsonMap(rawSettings));
+    }
+    ready = true;
+    checkDeadlineStatus();
+    _syncAchievementUnlocks(notify: false);
+    await save();
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => checkDeadlineStatus());
+    notifyListeners();
+  }
+
+  Future<void> save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_stateKey, encodeJson(state.toJson()));
+    await prefs.setString(_settingsKey, encodeJson(settings.toJson()));
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  List<Quest> activeQuests() {
+    final items = state.quests.where((q) => !q.isCompleted).toList();
+    items.sort((a, b) {
+      if (a.favorite != b.favorite) return a.favorite ? -1 : 1;
+      if (sortMode == QuestSortMode.priority) {
+        final p = b.priority.rank.compareTo(a.priority.rank);
+        if (p != 0) return p;
+      } else {
+        final e = b.expGainAt(DateTime.now()).compareTo(a.expGainAt(DateTime.now()));
+        if (e != 0) return e;
+      }
+      return a.deadline.compareTo(b.deadline);
+    });
+    return items;
+  }
+
+  List<Quest> completedQuests() {
+    final items = state.quests.where((q) => q.isCompleted).toList();
+    items.sort((a, b) => (b.completedAt ?? b.deadline).compareTo(a.completedAt ?? a.deadline));
+    return items;
+  }
+
+  Future<String?> addQuest(Quest quest) async {
+    final maxDeadline = quest.createdAt.add(Duration(days: quest.priority.maxDeadlineDays));
+    if (quest.deadline.isAfter(maxDeadline)) {
+      return 'Deadline too long for this priority. Max ${quest.priority.maxDeadlineDays} days.';
+    }
+    state.quests.add(quest);
+    _pushNotification(
+      AppNotification(
+        kind: AppNotificationKind.action,
+        title: 'ACTION CONFIRMED!',
+        message: '${quest.title} was added to your quest list.',
+      ),
+      shouldNotifyListeners: false,
+    );
+    await save();
+    notifyListeners();
+    return null;
+  }
+
+  Future<void> toggleFavorite(String questId) async {
+    final q = state.quests.where((e) => e.id == questId).firstOrNull;
+    if (q == null) return;
+    q.favorite = !q.favorite;
+    await save();
+    notifyListeners();
+  }
+
+  Future<CompleteResult?> completeQuest(String questId, {String notes = '', List<String> photoPaths = const <String>[]}) async {
+    final q = state.quests.where((e) => e.id == questId).firstOrNull;
+    if (q == null || q.isCompleted) return null;
+    final now = DateTime.now();
+    final late = now.isAfter(q.deadline);
+    final gained = q.expGainAt(now);
+
+    q.completedAt = now;
+    q.completionNotes = notes;
+    q.photoPaths = photoPaths.take(10).toList();
+    q.completionExp = gained;
+    q.completedLate = late;
+
+    state.exp += gained;
+    state.totalCompleted += 1;
+    if (late) {
+      state.lateCompleted += 1;
+      state.streak = 0;
+      _pushNotification(
+        AppNotification(
+          kind: AppNotificationKind.deadline,
+          title: 'DEADLINE PASSED!',
+          message: '${q.title}: streak reset, but you still gained +$gained EXP.',
+        ),
+        shouldNotifyListeners: false,
+      );
+    } else {
+      state.streak += 1;
+      _pushNotification(
+        AppNotification(
+          kind: AppNotificationKind.action,
+          title: 'ACTION CONFIRMED!',
+          message: '${q.title} completed. +$gained EXP gained.',
+        ),
+        shouldNotifyListeners: false,
+      );
+    }
+
+    int? levelUp;
+    while (state.exp >= state.expNeeded) {
+      state.exp -= state.expNeeded;
+      state.level += 1;
+      levelUp = state.level;
+    }
+    levelUpToShow = levelUp;
+    _syncAchievementUnlocks(notify: true);
+
+    await save();
+    notifyListeners();
+    return CompleteResult(expGained: gained, leveledUpTo: levelUp);
+  }
+
+  Future<void> setSortMode(QuestSortMode mode) async {
+    sortMode = mode;
+    notifyListeners();
+  }
+
+  Future<void> updateSettings(AppSettings next) async {
+    settings = next;
+    await save();
+    notifyListeners();
+  }
+
+  Future<void> resetAllData() async {
+    state = AppState();
+    _pendingNotifications.clear();
+    _pendingAlerts.clear();
+    levelUpToShow = null;
+    await save();
+    notifyListeners();
+  }
+
+  void notifyError(String title, String message) {
+    _pushNotification(AppNotification(kind: AppNotificationKind.error, title: title, message: message));
+  }
+
+  void notifyAction(String title, String message) {
+    _pushNotification(AppNotification(kind: AppNotificationKind.action, title: title, message: message));
+  }
+
+  List<AchievementProgress> achievements(bool Indonesian) {
+    final completed = state.totalCompleted;
+    final level = state.level;
+    final streak = state.streak;
+    final missed = state.deadlineFailed + state.lateCompleted;
+    final early24 = completedQuests().where((q) => q.completedAtLeast24HoursEarly()).length;
+    final withImages = completedQuests().where((q) => q.photoPaths.isNotEmpty).length;
+    final withNotes = completedQuests().where((q) => q.completionNotes.trim().isNotEmpty).length;
+    final urgentOnTime = completedQuests().where((q) => q.priority == Priority.urgent && !q.wasLateCompleted()).length;
+
+    AchievementProgress a(String id, String title, String desc, int current, int goal) => AchievementProgress(
+          id: id,
+          title: title,
+          description: desc,
+          current: current,
+          goal: goal,
+        );
+
+    return <AchievementProgress>[
+      a('quest_1', 'Quest Beginner', 'You completed a quest for the first time!', completed, 1),
+      a('quest_5', 'Quest Collector', 'Five quests down. Your todo list is scared.', completed, 5),
+      a('quest_10', 'Quest Hunter', 'You completed 10 quests. Not bad, main character.', completed, 10),
+      a('quest_25', 'Homework Slayer', '25 quests completed. You are actually grinding.', completed, 25),
+      a('quest_50', 'No-Life? Respect.', '50 quests completed. That is kind of insane.', completed, 50),
+      a('quest_100', 'Quest Final Boss', '100 quests completed. The checklist fears you.', completed, 100),
+      a('level_2', 'GETTING STARTED | LEVEL 2', 'You reached level 2. The tutorial is over.', level, 2),
+      a('level_5', "Oh wow, you're intermediate now | LEVEL 5", 'Level 5 reached. Your EXP bar is cooking.', level, 5),
+      a('level_10', "Damn, you're a Pro now | LEVEL 10", 'Level 10 reached. Certified quest enjoyer.', level, 10),
+      a('level_25', 'Homework Slayer | LEVEL 25', 'Level 25 reached. The grind is getting serious.', level, 25),
+      a('level_50', 'Pixel Academic Weapon | LEVEL 50', 'Level 50 reached. Your calendar needs backup.', level, 50),
+      a('level_100', 'DOXEL FINAL BOSS | LEVEL 100', 'Level 100 reached. You beat the todo game.', level, 100),
+      a('streak_1', 'Streak Spark', 'One clean quest. Keep the flame alive.', streak, 1),
+      a('streak_5', 'Streak Keeper', 'Five streak. Now it is becoming a habit.', streak, 5),
+      a('streak_10', 'Streak Warrior', 'Ten streak. Deadlines are sweating.', streak, 10),
+      a('streak_15', 'Calendar Bully', 'Fifteen streak. You bully your own schedule.', streak, 15),
+      a('streak_30', 'Streak Demon', 'Thirty streak. You are locked in.', streak, 30),
+      a('streak_60', 'Streak Monster', 'Sixty streak. That is discipline.', streak, 60),
+      a('streak_100', 'STREAK GOD!', 'One hundred streak. Absolutely illegal behavior.', streak, 100),
+      a('early_24h', 'Early Bird', 'Complete a quest at least 24 hours before deadline.', early24, 1),
+      a('miss_streak_1', 'Oops, Streak Gone', 'Lose your streak for the first time.', missed, 1),
+      a('miss_deadline_1', 'Huh Loser..', 'Miss a quest deadline for the first time.', missed, 1),
+      a('proof_sender', 'Proof Sender', 'Complete a quest with at least one image attached.', withImages, 1),
+      a('lore_writer', 'Lore Writer', 'Complete a quest with notes attached.', withNotes, 1),
+      a('panic_solver', 'Panic Solver', 'Complete an urgent quest on time.', urgentOnTime, 1),
+    ];
+  }
+
+  void checkDeadlineStatus() {
+    final now = DateTime.now();
+    var changed = false;
+
+    for (final q in state.quests.where((q) => !q.isCompleted)) {
+      if (now.isAfter(q.deadline) && !state.penalizedQuestIds.contains(q.id)) {
+        state.penalizedQuestIds.add(q.id);
+        state.deadlineFailed += 1;
+        state.streak = 0;
+        _pushNotification(
+          AppNotification(
+            kind: AppNotificationKind.deadline,
+            title: 'DEADLINE PASSED!',
+            message: '${q.title}: streak reset.',
+          ),
+          shouldNotifyListeners: false,
+        );
+        _pendingAlerts.add(DeadlineAlert(title: 'Deadline passed', message: '${q.title}: streak reset.'));
+        changed = true;
+      }
+
+      if (now.isBefore(q.deadline)) {
+        final remainingMinutes = q.deadline.difference(now).inMinutes;
+        for (final offset in settings.reminderMinutes) {
+          final key = '${q.id}:$offset';
+          final shouldAlert = remainingMinutes <= offset && remainingMinutes > offset - 60;
+          if (shouldAlert && !state.alertedReminderKeys.contains(key)) {
+            state.alertedReminderKeys.add(key);
+            _pushNotification(
+              AppNotification(
+                kind: AppNotificationKind.deadline,
+                title: 'DEADLINE SOON!',
+                message: '${q.title}: ${_formatRemaining(remainingMinutes)} left.',
+              ),
+              shouldNotifyListeners: false,
+            );
+            _pendingAlerts.add(DeadlineAlert(title: 'Deadline soon', message: '${q.title}: ${_formatRemaining(remainingMinutes)} left.'));
+            changed = true;
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      _syncAchievementUnlocks(notify: true);
+      save();
+      notifyListeners();
+    }
+  }
+
+  String _formatRemaining(int minutes) {
+    if (minutes >= 1440) return '${minutes ~/ 1440} days';
+    if (minutes >= 60) return '${minutes ~/ 60} hours';
+    return '$minutes minutes';
+  }
+
+  void _syncAchievementUnlocks({required bool notify}) {
+    var changed = false;
+    for (final achievement in achievements(false)) {
+      if (achievement.unlocked && !state.unlockedAchievementIds.contains(achievement.id)) {
+        state.unlockedAchievementIds.add(achievement.id);
+        changed = true;
+        if (notify) {
+          _pushNotification(
+            AppNotification(
+              kind: AppNotificationKind.achievement,
+              title: 'ACHIEVEMENT OBTAINED!',
+              message: '${achievement.title}\n${achievement.description}',
+            ),
+            shouldNotifyListeners: false,
+          );
+        }
+      }
+    }
+    if (changed && !notify) {
+      save();
+    }
+  }
+
+  void _pushNotification(AppNotification notification, {bool shouldNotifyListeners = true}) {
+    _pendingNotifications.add(notification);
+    if (shouldNotifyListeners) notifyListeners();
+  }
+
+  List<AppNotification> popPendingNotifications() {
+    final out = List<AppNotification>.from(_pendingNotifications);
+    _pendingNotifications.clear();
+    return out;
+  }
+
+  List<DeadlineAlert> popPendingAlerts() {
+    final out = List<DeadlineAlert>.from(_pendingAlerts);
+    _pendingAlerts.clear();
+    return out;
+  }
+
+  int? popLevelUp() {
+    final out = levelUpToShow;
+    levelUpToShow = null;
+    return out;
+  }
+}
+
+extension FirstOrNullExtension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}

@@ -1,0 +1,123 @@
+import 'package:flutter/material.dart';
+
+import 'app_controller.dart';
+import 'app_theme.dart';
+import 'i18n.dart';
+import 'models.dart';
+import 'pixel_widgets.dart';
+
+class StatsCard extends StatelessWidget {
+  const StatsCard({super.key, required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = L10n(controller.settings.language);
+    final s = controller.state;
+    final active = controller.state.quests.where((q) => !q.isCompleted).length;
+    final height = MediaQuery.sizeOf(context).width < 600 ? 270.0 : 300.0;
+    return PixelPanel(
+      title: l.stats,
+      height: height,
+      padding: const EdgeInsets.fromLTRB(22, 14, 22, 20),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Row(
+            children: <Widget>[
+              SizedBox(
+                width: constraints.maxWidth * 0.31,
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: DonutChart(
+                      completed: s.completedOnTime,
+                      late: s.lateCompleted,
+                      onDue: active,
+                      percent: s.completionPercent,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 22),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    FittedBox(
+                      alignment: Alignment.centerLeft,
+                      fit: BoxFit.scaleDown,
+                      child: Text(l.veryGood, style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w900, letterSpacing: 3)),
+                    ),
+                    const SizedBox(height: 18),
+                    _bar(context),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: <Widget>[
+                        Expanded(child: _legend(context, l, active)),
+                        Expanded(child: _miniStat(context, l.streak, '${s.streak}')),
+                        Expanded(child: _miniStat(context, l.level, '${s.level}\n${s.exp}/${s.expNeeded}')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _bar(BuildContext context) {
+    final c = appColors(context);
+    final pct = controller.state.expNeeded == 0 ? 0.0 : (controller.state.exp / controller.state.expNeeded).clamp(0.0, 1.0);
+    return Column(
+      children: <Widget>[
+        Container(height: 5, color: c.line.withValues(alpha: 0.9)),
+        const SizedBox(height: 5),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FractionallySizedBox(widthFactor: pct, child: Container(height: 5, color: c.line.withValues(alpha: 0.6))),
+        ),
+      ],
+    );
+  }
+
+  Widget _legend(BuildContext context, L10n l, int active) {
+    final c = appColors(context);
+    Widget item(Color color, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 5),
+          child: Row(children: <Widget>[
+            Container(width: 14, height: 14, color: color),
+            const SizedBox(width: 7),
+            Expanded(child: Text(text, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontSize: 13, fontWeight: FontWeight.w900))),
+          ]),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        item(const Color(0xFF00FF39), l.completed),
+        item(const Color(0xFFFF1208), l.late),
+        item(const Color(0xFFFFC400), l.due),
+      ],
+    );
+  }
+
+  Widget _miniStat(BuildContext context, String title, String value) {
+    final c = appColors(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: c.text, letterSpacing: 2)),
+          Container(height: 2, color: c.line.withValues(alpha: 0.85)),
+          const SizedBox(height: 4),
+          Text(value, textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: c.text, height: 1.15)),
+        ],
+      ),
+    );
+  }
+}
