@@ -1,7 +1,7 @@
 name: modelesson_quest
 description: A soft pixel gameplay todo app prototype built with Flutter.
 publish_to: 'none'
-version: 0.2.0+2
+version: 1.0.1+2
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
